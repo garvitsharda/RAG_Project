@@ -1,41 +1,43 @@
-from fastapi import FastAPI, UploadFile, File
-# , HTTPException
-from sentence_transformers import SentenceTransformer
-from utils.chroma_helper import add_document_to_chroma, search_chroma  # Import ChromaDB helper functions
-from typing import List
+from rag.db import (
+    add_to_collection,
+    get_db_collection,
+    query_collection,
+    generate_context,
+)
+from rag.llm import llm_invoke, prepare_chat_prompt
+from rag.document_loader import generate_document_payload
 
-app = FastAPI()
 
-# Initialize the sentence-transformers model for embedding generation
-model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+COLLECTION_NAME = "my_project"
+collection = get_db_collection(COLLECTION_NAME)
 
-# Define path for document storage
-DOCUMENT_STORE_PATH = "document_store/"
+# check if collection has documents already, if not load
+if collection.count() > 0:
+    print("Documents already loaded to DB")
+else:
+    print("Loading documents to DB")
 
-@app.post("/upload")
-async def upload_file(files: List[UploadFile] = File(...)):
-    for file in files:
-        # Read file content
-        contents = await file.read()
-        
-        # Generate embedding using the model
-        embedding = model.encode(contents.decode('utf-8'))
-        
-        # Store document and embedding in ChromaDB
-        add_document_to_chroma(file.filename, embedding)
-        
-        # Optional: Save file in document store folder
-        file_path = DOCUMENT_STORE_PATH + file.filename
-        with open(file_path, "wb") as f:
-            f.write(contents)
+    contents, ids, metadata = generate_document_payload(
+        file_path="docs/project-report.pdf"
+    )
+    add_to_collection(collection, contents, ids, metadata)
 
-    return {"message": f"Uploaded {len(files)} files successfully"}
 
-@app.get("/query")
-async def query_document(query: str):
-    # Convert query to an embedding
-    query_embedding = model.encode(query)
-    
-    # Query ChromaDB for similar documents
-    results = search_chroma(query_embedding)
-    return {"results": results}
+while True:
+
+    query_text = input(
+        "\n\nAsk anything about Automatic Medicine Vending Machine project. (Enter q to quit) :\n"
+    )
+    if query_text == "q":
+        print("Quitting...\n\n")
+        break
+
+    query_result = query_collection(collection, query_text)
+
+    context = generate_context(query_result)
+
+    prompt = prepare_chat_prompt(context, query_text)
+
+    result = llm_invoke(prompt)
+
+    print(result, "\n\n")
